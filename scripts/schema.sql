@@ -155,7 +155,8 @@ create table if not exists public.paperwork (
   ce_id        integer not null,
   file_name    text    not null,
   storage_path text    not null,
-  uploaded_at  timestamptz default now()
+  uploaded_at  timestamptz default now(),
+  unique (ce_id, file_name)
 );
 
 create index if not exists paperwork_ce_id_idx on public.paperwork (ce_id);
