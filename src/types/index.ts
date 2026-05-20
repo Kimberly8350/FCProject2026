@@ -132,6 +132,7 @@ export type ChangeRequestType =
   | 'supplier_change'
   | 'needs_review'
   | 'general_notification'
+  | 'settings_update'
 
 export interface LoadChangeRecord {
   id: string

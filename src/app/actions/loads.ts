@@ -45,7 +45,21 @@ export async function saveLoadSettings(input: {
     return existing.terminal_id
   }
 
-  input.terminalId = await resolveCustomTerminal(input.terminalId)
+  /** Look up a human-readable terminal name by ID */
+  async function terminalName(id: string | null): Promise<string> {
+    if (!id) return '—'
+    const { data } = await sb.from('terminals').select('terminal_name').eq('terminal_id', id).single()
+    return data?.terminal_name ?? id
+  }
+
+  /** Look up a supplier name by ID */
+  async function supplierName(id: number | null): Promise<string> {
+    if (!id) return '—'
+    const { data } = await sb.from('suppliers').select('supplier_name').eq('supplier_id', id).single()
+    return data?.supplier_name ?? String(id)
+  }
+
+  input.terminalId    = await resolveCustomTerminal(input.terminalId)
   input.bioTerminalId = await resolveCustomTerminal(input.bioTerminalId)
 
   // Fetch existing settings to detect what changed
@@ -55,6 +69,20 @@ export async function saveLoadSettings(input: {
     .eq('ce_id', input.ceId)
     .single()
 
+  // Detect changes across all tracked fields
+  const changedTerminal     = existing?.terminal_id        !== input.terminalId
+  const changedSupplier     = existing?.supplier_id        !== input.supplierId
+  const changedSupplierNum  = existing?.supplier_number    !== input.supplierNumber
+  const changedBioTerminal  = existing?.bio_terminal_id    !== input.bioTerminalId
+  const changedBioSupplier  = existing?.bio_supplier_id    !== input.bioSupplierId
+  const changedBioSupNum    = existing?.bio_supplier_number !== input.bioSupplierNumber
+  const changedNotes        = existing?.notes              !== input.notes
+
+  const anyChanged =
+    changedTerminal || changedSupplier || changedSupplierNum ||
+    changedBioTerminal || changedBioSupplier || changedBioSupNum || changedNotes
+
+  // Persist settings regardless
   await sb.from('load_settings').upsert({
     ce_id: input.ceId,
     driver_id: input.driverId,
@@ -70,76 +98,82 @@ export async function saveLoadSettings(input: {
     updated_at: new Date().toISOString(),
   })
 
-  // Log terminal change
-  if (existing?.terminal_id !== input.terminalId) {
+  // Only send one consolidated email if something actually changed
+  if (anyChanged) {
+    // Resolve all display names in parallel
+    const [
+      oldTermName, newTermName,
+      oldBioTermName, newBioTermName,
+      oldSupName, newSupName,
+      oldBioSupName, newBioSupName,
+    ] = await Promise.all([
+      terminalName(existing?.terminal_id ?? null),
+      terminalName(input.terminalId),
+      terminalName(existing?.bio_terminal_id ?? null),
+      terminalName(input.bioTerminalId),
+      supplierName(existing?.supplier_id ?? null),
+      supplierName(input.supplierId),
+      supplierName(existing?.bio_supplier_id ?? null),
+      supplierName(input.bioSupplierId),
+    ])
+
+    /** Build one table row: shows "No Change" when the field is unchanged */
+    function row(
+      field: string,
+      prevVal: string,
+      newVal: string,
+      changed: boolean,
+    ): string {
+      const updatedCell = changed
+        ? `<strong style="color:#1d4ed8">${newVal}</strong>`
+        : `<span style="color:#9ca3af">No Change</span>`
+      return `
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;white-space:nowrap">${field}</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#6b7280">${prevVal}</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb">${updatedCell}</td>
+        </tr>`
+    }
+
+    const tableRows = [
+      row('Terminal',      oldTermName,                           newTermName,                           changedTerminal),
+      row('Supplier',      oldSupName,                            newSupName,                            changedSupplier),
+      row('Supplier #',    existing?.supplier_number    ?? '—',   input.supplierNumber    ?? '—',        changedSupplierNum),
+      row('Bio Terminal',  oldBioTermName,                        newBioTermName,                        changedBioTerminal),
+      row('Bio Supplier',  oldBioSupName,                         newBioSupName,                         changedBioSupplier),
+      row('Bio Supplier #',existing?.bio_supplier_number ?? '—',  input.bioSupplierNumber ?? '—',        changedBioSupNum),
+      row('Notes',         existing?.notes              ?? '—',   input.notes             ?? '—',        changedNotes),
+    ].join('')
+
+    const htmlContent = `
+      <h2 style="margin:0 0 16px;font-size:18px;color:#111827">
+        Load Updates &mdash; CE #${input.ceId}
+      </h2>
+      <table style="border-collapse:collapse;width:100%;font-size:14px">
+        <thead>
+          <tr style="background:#f9fafb">
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e5e7eb;color:#374151">Field</th>
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e5e7eb;color:#374151">Previous</th>
+            <th style="text-align:left;padding:8px 12px;border:1px solid #e5e7eb;color:#374151">Updated To</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+      </table>`
+
+    // Log a single change record
     const { data: changeRecord } = await sb.from('load_changes').insert({
       ce_id: input.ceId,
-      change_type: 'terminal_change',
-      old_value: existing?.terminal_id ?? null,
-      new_value: input.terminalId,
-      description: `Terminal updated to ${input.terminalId}`,
+      change_type: 'settings_update',
+      description: 'Load settings updated',
+      notes: input.notes,
     }).select().single()
 
     await sendNotificationEmail({
-      subject: `[CE #${input.ceId}] Terminal Updated`,
-      body: `CE ID: ${input.ceId}\nTerminal changed to: ${input.terminalId}\nNotes: ${input.notes ?? '—'}`,
-      referenceType: 'load_change',
-      referenceId: changeRecord?.id,
-      ceId: input.ceId,
-    })
-  }
-
-  // Log bio terminal change
-  if (existing?.bio_terminal_id !== input.bioTerminalId) {
-    const { data: changeRecord } = await sb.from('load_changes').insert({
-      ce_id: input.ceId,
-      change_type: 'terminal_change',
-      old_value: existing?.bio_terminal_id ?? null,
-      new_value: input.bioTerminalId,
-      description: `Bio terminal updated to ${input.bioTerminalId}`,
-    }).select().single()
-
-    await sendNotificationEmail({
-      subject: `[CE #${input.ceId}] Bio Terminal Updated`,
-      body: `CE ID: ${input.ceId}\nBio terminal changed to: ${input.bioTerminalId}\nNotes: ${input.notes ?? '—'}`,
-      referenceType: 'load_change',
-      referenceId: changeRecord?.id,
-      ceId: input.ceId,
-    })
-  }
-
-  // Log supplier change
-  if (existing?.supplier_id !== input.supplierId || existing?.supplier_number !== input.supplierNumber) {
-    const { data: changeRecord } = await sb.from('load_changes').insert({
-      ce_id: input.ceId,
-      change_type: 'supplier_change',
-      old_value: existing?.supplier_number ?? null,
-      new_value: input.supplierNumber,
-      description: `Supplier updated`,
-    }).select().single()
-
-    await sendNotificationEmail({
-      subject: `[CE #${input.ceId}] Supplier Updated`,
-      body: `CE ID: ${input.ceId}\nSupplier #: ${input.supplierNumber}\nNotes: ${input.notes ?? '—'}`,
-      referenceType: 'load_change',
-      referenceId: changeRecord?.id,
-      ceId: input.ceId,
-    })
-  }
-
-  // Log bio supplier change
-  if (existing?.bio_supplier_id !== input.bioSupplierId || existing?.bio_supplier_number !== input.bioSupplierNumber) {
-    const { data: changeRecord } = await sb.from('load_changes').insert({
-      ce_id: input.ceId,
-      change_type: 'supplier_change',
-      old_value: existing?.bio_supplier_number ?? null,
-      new_value: input.bioSupplierNumber,
-      description: `Bio supplier updated`,
-    }).select().single()
-
-    await sendNotificationEmail({
-      subject: `[CE #${input.ceId}] Bio Supplier Updated`,
-      body: `CE ID: ${input.ceId}\nBio Supplier #: ${input.bioSupplierNumber}\nNotes: ${input.notes ?? '—'}`,
+      subject: `Load Updates for CE #${input.ceId}`,
+      body: `Load settings updated for CE #${input.ceId}`,
+      html: htmlContent,
       referenceType: 'load_change',
       referenceId: changeRecord?.id,
       ceId: input.ceId,
@@ -168,16 +202,40 @@ export async function submitChangeRequest(input: {
     needs_review:       'Needs review',
   }
 
+  const label = LABELS[input.changeType] ?? input.changeType
+
   const { data: changeRecord } = await sb.from('load_changes').insert({
     ce_id: input.ceId,
     change_type: input.changeType,
-    description: LABELS[input.changeType] ?? input.changeType,
+    description: label,
     notes: input.notes,
   }).select().single()
 
+  const htmlContent = `
+    <h2 style="margin:0 0 16px;font-size:18px;color:#111827">
+      Change Request &mdash; CE #${input.ceId}
+    </h2>
+    <table style="border-collapse:collapse;width:100%;font-size:14px">
+      <tbody>
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;width:140px">CE ID</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb">${input.ceId}</td>
+        </tr>
+        <tr style="background:#f9fafb">
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600">Request</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb"><strong>${label}</strong></td>
+        </tr>
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600">Notes</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:${input.notes ? '#111827' : '#9ca3af'}">${input.notes ?? '—'}</td>
+        </tr>
+      </tbody>
+    </table>`
+
   await sendNotificationEmail({
-    subject: `[CE #${input.ceId}] ${LABELS[input.changeType] ?? input.changeType}`,
-    body: `CE ID: ${input.ceId}\nRequest: ${LABELS[input.changeType]}\nNotes: ${input.notes ?? '—'}`,
+    subject: `Change Request for CE #${input.ceId}`,
+    body: `Change request for CE #${input.ceId}: ${label}. Notes: ${input.notes ?? '—'}`,
+    html: htmlContent,
     referenceType: 'load_change',
     referenceId: changeRecord?.id,
     ceId: input.ceId,
@@ -199,8 +257,8 @@ export async function sendDispatchNote(input: { ceId: number; message: string })
   }).select().single()
 
   await sendNotificationEmail({
-    subject: `[CE #${input.ceId}] Dispatch Note`,
-    body: `CE ID: ${input.ceId}\nMessage: ${input.message}`,
+    subject: `Dispatch Note for CE #${input.ceId}`,
+    body: `Dispatch note for CE #${input.ceId}: ${input.message}`,
     referenceType: 'load_change',
     referenceId: changeRecord?.id,
     ceId: input.ceId,

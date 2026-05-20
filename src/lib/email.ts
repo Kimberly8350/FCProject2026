@@ -12,7 +12,8 @@ const FROM = process.env.RESEND_FROM_ADDRESS!
 
 export interface SendNotificationOptions {
   subject: string
-  body: string
+  body: string          // plain-text fallback
+  html?: string         // if provided, used as the email body content instead of body
   referenceType: 'load_change' | 'general_notification'
   referenceId: string | undefined
   ceId: number | null
@@ -35,7 +36,7 @@ export async function sendNotificationEmail(opts: SendNotificationOptions) {
 
   const replyTo = FROM // dispatch replies go back to the portal's inbound address
 
-  const htmlBody = opts.body
+  const htmlBody = opts.html ?? opts.body
     .split('\n')
     .map(l => `<p style="margin:4px 0;font-family:sans-serif;font-size:14px">${l}</p>`)
     .join('')
@@ -47,10 +48,10 @@ export async function sendNotificationEmail(opts: SendNotificationOptions) {
       replyTo: replyTo,
       subject: opts.subject,
       html: `
-        <div style="max-width:600px;margin:0 auto;padding:24px">
+        <div style="max-width:640px;margin:0 auto;padding:24px;font-family:sans-serif">
           ${htmlBody}
-          <hr style="margin:24px 0;border:none;border-top:1px solid #eee"/>
-          <p style="font-size:12px;color:#999;font-family:sans-serif">
+          <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb"/>
+          <p style="font-size:12px;color:#9ca3af">
             Reply to this email to respond. Your reply will be recorded in the Fuel City Portal.
           </p>
         </div>
