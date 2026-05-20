@@ -44,7 +44,7 @@ export async function sendNotificationEmail(opts: SendNotificationOptions) {
     const { data: sent } = await resend.emails.send({
       from: `Fuel City Portal <${FROM}>`,
       to: receiveAddresses,
-      reply_to: replyTo,
+      replyTo: replyTo,
       subject: opts.subject,
       html: `
         <div style="max-width:600px;margin:0 auto;padding:24px">
