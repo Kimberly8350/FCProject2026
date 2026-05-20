@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { FUEL_CITY_SITE_IDS, LOAD_STATUS_LABELS } from '@/types'
+import { FUEL_CITY_SITE_IDS, LOCKED_STATUSES, ETAResult } from '@/types'
+import { calculateETA } from '@/lib/eta'
 import LoadsBoard from '@/components/loads/LoadsBoard'
 import DatePicker from '@/components/loads/DatePicker'
 
@@ -17,45 +18,113 @@ export default async function LoadsPage({ searchParams }: PageProps) {
 
   const supabase = await createClient()
 
-  // All loads for the selected date (all customers — needed for ETA driver context)
-  const { data: allLoads } = await supabase
-    .from('loads')
-    .select('*')
-    .eq('delivery_date', selectedDate)
-    .order('load_status', { ascending: true })
+  // Parallel data fetches
+  const [
+    { data: allLoads },
+    { data: terminals },
+    { data: suppliers },
+    { data: sites },
+    { data: drivers },
+  ] = await Promise.all([
+    supabase
+      .from('loads')
+      .select('*')
+      .eq('delivery_date', selectedDate)
+      .order('load_status', { ascending: true }),
+    supabase
+      .from('terminals')
+      .select('terminal_id, terminal_name, is_fuel_city, is_custom, latitude, longitude')
+      .order('terminal_name'),
+    supabase
+      .from('suppliers')
+      .select('supplier_id, supplier_name, supplier_loading_number')
+      .order('supplier_name'),
+    supabase
+      .from('sites')
+      .select('site_id, site_name, latitude, longitude'),
+    supabase
+      .from('drivers')
+      .select('*, yard:yards(*)')
+      .eq('active', true),
+  ])
 
-  // Fuel City loads only (filtered by site_id)
-  const fcLoads = (allLoads ?? []).filter(l =>
-    FUEL_CITY_SITE_IDS.includes(l.site_id)
-  )
+  // Fuel City loads only
+  const fcLoads = (allLoads ?? []).filter(l => FUEL_CITY_SITE_IDS.includes(l.site_id))
 
-  // Fuel City terminals for dropdown
-  const { data: terminals } = await supabase
-    .from('terminals')
-    .select('terminal_id, terminal_name, is_fuel_city, is_custom')
-    .order('terminal_name')
-
-  // All suppliers
-  const { data: suppliers } = await supabase
-    .from('suppliers')
-    .select('supplier_id, supplier_name, supplier_loading_number')
-    .order('supplier_name')
-
-  // Load settings (user's saved terminal/supplier selections)
+  // Load settings
   const ceIds = [...new Set(fcLoads.map(l => l.ce_id))]
   const { data: settings } = ceIds.length
-    ? await supabase
-        .from('load_settings')
-        .select('*')
-        .in('ce_id', ceIds)
+    ? await supabase.from('load_settings').select('*').in('ce_id', ceIds)
     : { data: [] }
 
-  // Fuel City sites (for coords)
-  const { data: sites } = await supabase
-    .from('sites')
-    .select('site_id, site_name, latitude, longitude')
+  const settingsMap = Object.fromEntries((settings ?? []).map(s => [s.ce_id, s]))
 
-  // Group FC loads by site
+  // Group FC loads by CE_ID for ETA computation
+  const byCeId: Record<number, typeof fcLoads> = {}
+  for (const load of fcLoads) {
+    if (!byCeId[load.ce_id]) byCeId[load.ce_id] = []
+    byCeId[load.ce_id].push(load)
+  }
+
+  // Compute ETAs in parallel for all FC load groups
+  const etaEntries = await Promise.all(
+    Object.entries(byCeId).map(async ([ceIdStr, ceLoads]) => {
+      const ceId = parseInt(ceIdStr)
+      const primary = ceLoads[0]
+
+      // Locked / delivered: return dispatch values without a Maps API call
+      if (LOCKED_STATUSES.includes(primary.load_status)) {
+        const eta: ETAResult = {
+          terminal_eta: primary.arrived_at_rack_time
+            ? new Date(primary.arrived_at_rack_time).toLocaleString('en-US', {
+                timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
+              })
+            : null,
+          site_eta: primary.delivery_eta
+            ? new Date(primary.delivery_eta).toLocaleString('en-US', {
+                timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
+              })
+            : null,
+          basis: 'dispatch',
+        }
+        return [ceId, eta] as const
+      }
+
+      // Terminal coords (use saved setting terminal, fall back to feed terminal)
+      const termId = settingsMap[ceId]?.terminal_id ?? primary.terminal_id
+      const term = (terminals ?? []).find(t => t.terminal_id === termId)
+      const terminalCoords = term?.latitude && term?.longitude
+        ? { lat: Number(term.latitude), lng: Number(term.longitude) }
+        : null
+
+      // FC site coords
+      const site = (sites ?? []).find(s => s.site_id === primary.site_id)
+      const siteCoords = site?.latitude && site?.longitude
+        ? { lat: Number(site.latitude), lng: Number(site.longitude) }
+        : null
+
+      // Match driver by name (case-insensitive)
+      const driver = (drivers ?? []).find(d =>
+        d.first_name?.toLowerCase() === primary.first_name?.toLowerCase() &&
+        d.last_name?.toLowerCase() === primary.last_name?.toLowerCase()
+      )
+      const yard = driver?.yard
+      const driverInfo = driver && yard?.latitude && yard?.longitude
+        ? {
+            startTime:    driver.default_start_time,
+            yardCoords:   { lat: Number(yard.latitude), lng: Number(yard.longitude) },
+            deliveryDate: selectedDate,
+          }
+        : null
+
+      const eta = await calculateETA(primary, allLoads ?? [], terminalCoords, siteCoords, driverInfo)
+      return [ceId, eta] as const
+    })
+  )
+
+  const etaMap = Object.fromEntries(etaEntries) as Record<number, ETAResult>
+
+  // Group FC loads by site for the board
   const bySite: Record<string, typeof fcLoads> = {}
   for (const load of fcLoads) {
     const key = `${load.site_id}:${load.site_name}`
@@ -63,7 +132,6 @@ export default async function LoadsPage({ searchParams }: PageProps) {
     bySite[key].push(load)
   }
 
-  const settingsMap = Object.fromEntries((settings ?? []).map(s => [s.ce_id, s]))
   const syncedAt = allLoads?.[0]?.synced_at ?? null
 
   return (
@@ -92,6 +160,7 @@ export default async function LoadsPage({ searchParams }: PageProps) {
           suppliers={suppliers ?? []}
           settingsMap={settingsMap}
           sites={sites ?? []}
+          etaMap={etaMap}
         />
       )}
     </div>

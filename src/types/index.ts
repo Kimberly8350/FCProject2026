@@ -166,3 +166,23 @@ export interface ETAResult {
   site_eta: string | null
   basis: 'calculated' | 'dispatch' | 'unavailable'
 }
+
+export interface Yard {
+  yard_id: number
+  yard_name: string
+  address: string | null
+  city: string | null
+  state: string | null
+  latitude: number | null
+  longitude: number | null
+}
+
+export interface Driver {
+  driver_id: number
+  first_name: string
+  last_name: string
+  yard_id: number | null
+  default_start_time: string   // "06:00:00"
+  active: boolean
+  yard?: Yard | null
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Load, Terminal, Supplier, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
+import { Load, Terminal, Supplier, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
 import { saveLoadSettings, submitChangeRequest, sendDispatchNote } from '@/app/actions/loads'
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
     needs_review: boolean
     needs_review_notes: string | null
   } | null
+  eta: ETAResult | null
   siteCoords: { lat: number; lng: number } | null
 }
 
@@ -43,7 +44,7 @@ const CHANGE_OPTIONS = [
   { value: 'cancel',             label: 'Cancel load' },
 ]
 
-export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, siteCoords }: Props) {
+export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, eta, siteCoords }: Props) {
   const primary = loads[0]
   const ceId = primary.ce_id
   const isLocked = LOCKED_STATUSES.includes(primary.load_status)
@@ -175,27 +176,24 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
         ))}
       </div>
 
-      {/* ETA row — shown from dispatch data for now; ETA endpoint enriches this */}
-      {(primary.delivery_eta || primary.arrived_at_rack_time) && (
+      {/* ETA row */}
+      {(eta?.terminal_eta || eta?.site_eta) && (
         <div className="grid grid-cols-2 gap-2 text-xs">
-          {primary.arrived_at_rack_time && (
+          {eta.terminal_eta && (
             <div className="bg-gray-50 rounded p-2">
               <p className="text-gray-400 uppercase tracking-wide text-[10px]">Terminal ETA</p>
-              <p className="font-medium text-gray-800 mt-0.5">
-                {new Date(primary.arrived_at_rack_time).toLocaleTimeString('en-US', {
-                  timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
-                })}
-              </p>
+              <p className="font-medium text-gray-800 mt-0.5">{eta.terminal_eta}</p>
             </div>
           )}
-          {primary.delivery_eta && (
+          {eta.site_eta && (
             <div className="bg-gray-50 rounded p-2">
-              <p className="text-gray-400 uppercase tracking-wide text-[10px]">Delivery ETA</p>
-              <p className="font-medium text-gray-800 mt-0.5">
-                {new Date(primary.delivery_eta).toLocaleTimeString('en-US', {
-                  timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
-                })}
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="text-gray-400 uppercase tracking-wide text-[10px]">Delivery ETA</p>
+                {eta.basis === 'calculated' && (
+                  <span className="text-[9px] text-blue-500 font-medium">est.</span>
+                )}
+              </div>
+              <p className="font-medium text-gray-800 mt-0.5">{eta.site_eta}</p>
             </div>
           )}
         </div>

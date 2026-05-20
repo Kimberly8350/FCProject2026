@@ -11,6 +11,8 @@ const NAV_ITEMS = [
   { href: '/email-settings',label: 'Email Settings' },
 ]
 
+const ADMIN_EMAIL = 'kimberly@qwtransport.com'
+
 export default function NavBar({ userEmail }: { userEmail: string }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -42,6 +44,18 @@ export default function NavBar({ userEmail }: { userEmail: string }) {
               {item.label}
             </Link>
           ))}
+          {userEmail === ADMIN_EMAIL && (
+            <Link
+              href="/admin"
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                pathname.startsWith('/admin')
+                  ? 'bg-red-600 text-white'
+                  : 'text-gray-300 hover:text-white hover:bg-gray-800'
+              }`}
+            >
+              Admin
+            </Link>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400 hidden sm:block">{userEmail}</span>
