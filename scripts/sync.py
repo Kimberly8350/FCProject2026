@@ -145,6 +145,13 @@ def sync(sb: Client):
         log.warning("No load records found in spreadsheet")
         return
 
+    # Deduplicate by (ce_id, product_name) — keep last occurrence
+    seen = {}
+    for r in records:
+        seen[(r["ce_id"], r["product_name"])] = r
+    records = list(seen.values())
+    log.info(f"Rows after dedup: {len(records)}")
+
     # Upsert in batches to stay under Supabase request size limits
     batch_size = 500
     total = 0

@@ -123,6 +123,12 @@ def seed_terminals(sb: Client):
             "is_fuel_city":          to_bool(r.get("is_fuel_city")),
             "is_custom":             False,
         })
+    # Deduplicate by terminal_id (spreadsheet may have duplicate rows)
+    seen = {}
+    for r in records:
+        seen[r["terminal_id"]] = r
+    records = list(seen.values())
+
     res = sb.table("terminals").upsert(records).execute()
     print(f"  terminals: {len(records)} rows upserted")
 
@@ -238,7 +244,11 @@ def main():
     seed_email_notifications(sb)
 
     print("Seeding initial load data...")
-    seed_loads(sb)
+    try:
+        seed_loads(sb)
+    except PermissionError:
+        print("  loads: skipped (file is open in Excel or locked by OneDrive)")
+        print("  -> Run scripts/sync.py once Excel is closed to populate loads.")
 
     print("\nDone! All tables seeded.")
     print("\nNext steps:")
