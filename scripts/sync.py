@@ -17,6 +17,9 @@ import time
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, date
+from zoneinfo import ZoneInfo
+
+CENTRAL = ZoneInfo('America/Chicago')
 from dotenv import load_dotenv
 import openpyxl
 from supabase import create_client, Client
@@ -60,7 +63,7 @@ def to_ts(v) -> str | None:
         return None
     if isinstance(v, datetime):
         if v.tzinfo is None:
-            v = v.replace(tzinfo=timezone.utc)
+            v = v.replace(tzinfo=CENTRAL)  # Excel times are Central Time
         return v.isoformat()
     if isinstance(v, date):
         return v.isoformat()
