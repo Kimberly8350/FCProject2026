@@ -44,6 +44,7 @@ export interface Load {
 
 export interface LoadSettings {
   ce_id: number
+  driver_id: number | null
   terminal_id: string | null
   supplier_id: number | null
   supplier_number: string | null

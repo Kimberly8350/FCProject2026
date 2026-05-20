@@ -1,6 +1,6 @@
 'use client'
 
-import { Load, Terminal, Supplier, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES } from '@/types'
+import { Load, Terminal, Supplier, Driver, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES } from '@/types'
 import LoadCard from './LoadCard'
 
 interface Props {
@@ -11,6 +11,8 @@ interface Props {
   settingsMap: Record<number, any>
   sites: { site_id: number; site_name: string; latitude: number | null; longitude: number | null }[]
   etaMap: Record<number, ETAResult>
+  drivers: Driver[]
+  isAdmin: boolean
 }
 
 // Sort loads: active statuses first (12, 20, 22, 24), then confirmed (10), then others
@@ -19,7 +21,7 @@ const STATUS_SORT: Record<number, number> = {
 }
 
 export default function LoadsBoard({
-  bySite, allLoads, terminals, suppliers, settingsMap, sites, etaMap,
+  bySite, allLoads, terminals, suppliers, settingsMap, sites, etaMap, drivers, isAdmin,
 }: Props) {
   const siteKeys = Object.keys(bySite).sort((a, b) => {
     const siteA = a.split(':')[1]
@@ -71,6 +73,8 @@ export default function LoadsBoard({
                   suppliers={suppliers}
                   settings={settingsMap[ceId] ?? null}
                   eta={etaMap[ceId] ?? null}
+                  drivers={drivers}
+                  isAdmin={isAdmin}
                   siteCoords={
                     siteCoords?.latitude && siteCoords?.longitude
                       ? { lat: siteCoords.latitude, lng: siteCoords.longitude }

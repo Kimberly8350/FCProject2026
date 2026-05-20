@@ -9,6 +9,7 @@ import { ChangeRequestType } from '@/types'
 
 export async function saveLoadSettings(input: {
   ceId: number
+  driverId: number | null
   terminalId: string | null
   supplierId: number | null
   supplierNumber: string | null
@@ -56,6 +57,7 @@ export async function saveLoadSettings(input: {
 
   await sb.from('load_settings').upsert({
     ce_id: input.ceId,
+    driver_id: input.driverId,
     terminal_id: input.terminalId,
     supplier_id: input.supplierId,
     supplier_number: input.supplierNumber,

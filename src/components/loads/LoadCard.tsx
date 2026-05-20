@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Load, Terminal, Supplier, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
+import { Load, Terminal, Supplier, Driver, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
 import { saveLoadSettings, submitChangeRequest, sendDispatchNote } from '@/app/actions/loads'
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
   terminals: Pick<Terminal, 'terminal_id' | 'terminal_name' | 'is_fuel_city' | 'is_custom'>[]
   suppliers: Pick<Supplier, 'supplier_id' | 'supplier_name' | 'supplier_loading_number'>[]
   settings: {
+    driver_id: number | null
     terminal_id: string | null
     supplier_id: number | null
     supplier_number: string | null
@@ -21,6 +22,8 @@ interface Props {
     needs_review_notes: string | null
   } | null
   eta: ETAResult | null
+  drivers: Driver[]
+  isAdmin: boolean
   siteCoords: { lat: number; lng: number } | null
 }
 
@@ -44,7 +47,7 @@ const CHANGE_OPTIONS = [
   { value: 'cancel',             label: 'Cancel load' },
 ]
 
-export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, eta, siteCoords }: Props) {
+export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, eta, drivers, isAdmin, siteCoords }: Props) {
   const primary = loads[0]
   const ceId = primary.ce_id
   const isLocked = LOCKED_STATUSES.includes(primary.load_status)
@@ -52,6 +55,7 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   const isBioLoad = hasBioOrDiesel(loads.map(l => l.product_name))
 
   // Local state mirroring saved settings
+  const [driverId, setDriverId] = useState<string>(settings?.driver_id?.toString() ?? '')
   const [terminalId, setTerminalId] = useState(settings?.terminal_id ?? primary.terminal_id ?? '')
   const [supplierId, setSupplierId] = useState<string>(settings?.supplier_id?.toString() ?? '')
   const [supplierNumber, setSupplierNumber] = useState(settings?.supplier_number ?? '')
@@ -93,6 +97,7 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
     startTransition(async () => {
       await saveLoadSettings({
         ceId,
+        driverId: driverId ? parseInt(driverId) : null,
         terminalId: terminalId || null,
         supplierId: supplierId ? parseInt(supplierId) : null,
         supplierNumber: supplierNumber || null,
@@ -132,6 +137,7 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
     startTransition(async () => {
       await saveLoadSettings({
         ceId,
+        driverId: driverId ? parseInt(driverId) : null,
         terminalId: terminalId || null,
         supplierId: supplierId ? parseInt(supplierId) : null,
         supplierNumber: supplierNumber || null,
@@ -165,6 +171,31 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
           {LOAD_STATUS_LABELS[primary.load_status] ?? `Status ${primary.load_status}`}
         </span>
       </div>
+
+      {/* Admin: manual driver assignment */}
+      {isAdmin && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Assigned Driver</label>
+          <select
+            value={driverId}
+            onChange={e => setDriverId(e.target.value)}
+            className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-400"
+          >
+            <option value="">
+              {primary.first_name
+                ? `${primary.first_name} ${primary.last_name} (from feed)`
+                : '— Unassigned —'}
+            </option>
+            {[...drivers]
+              .sort((a, b) => a.last_name.localeCompare(b.last_name))
+              .map(d => (
+                <option key={d.driver_id} value={d.driver_id}>
+                  {d.last_name}, {d.first_name}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
 
       {/* Products */}
       <div className="bg-gray-50 rounded-lg p-2 space-y-0.5">

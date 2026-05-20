@@ -17,6 +17,8 @@ export default async function LoadsPage({ searchParams }: PageProps) {
   const selectedDate = params.date ?? todayCT()
 
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const isAdmin = user?.email === 'kimberly@qwtransport.com'
 
   // Parallel data fetches
   const [
@@ -103,11 +105,15 @@ export default async function LoadsPage({ searchParams }: PageProps) {
         ? { lat: Number(site.latitude), lng: Number(site.longitude) }
         : null
 
-      // Match driver by name (case-insensitive)
-      const driver = (drivers ?? []).find(d =>
+      // Match driver: by name from feed first, then fall back to manual assignment in settings
+      let driver = (drivers ?? []).find(d =>
+        primary.first_name && primary.last_name &&
         d.first_name?.toLowerCase() === primary.first_name?.toLowerCase() &&
         d.last_name?.toLowerCase() === primary.last_name?.toLowerCase()
       )
+      if (!driver && settingsMap[ceId]?.driver_id) {
+        driver = (drivers ?? []).find(d => d.driver_id === settingsMap[ceId].driver_id)
+      }
       const yard = driver?.yard
       const driverInfo = driver && yard?.latitude && yard?.longitude
         ? {
@@ -161,6 +167,8 @@ export default async function LoadsPage({ searchParams }: PageProps) {
           settingsMap={settingsMap}
           sites={sites ?? []}
           etaMap={etaMap}
+          drivers={drivers ?? []}
+          isAdmin={isAdmin}
         />
       )}
     </div>
