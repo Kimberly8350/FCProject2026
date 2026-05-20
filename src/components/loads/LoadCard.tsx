@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Load, Terminal, Supplier, LOAD_STATUS_LABELS, LOCKED_STATUSES } from '@/types'
+import { Load, Terminal, Supplier, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
 import { saveLoadSettings, submitChangeRequest, sendDispatchNote } from '@/app/actions/loads'
 
 interface Props {
@@ -13,6 +13,9 @@ interface Props {
     terminal_id: string | null
     supplier_id: number | null
     supplier_number: string | null
+    bio_terminal_id: string | null
+    bio_supplier_id: number | null
+    bio_supplier_number: string | null
     notes: string | null
     needs_review: boolean
     needs_review_notes: string | null
@@ -45,11 +48,15 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   const ceId = primary.ce_id
   const isLocked = LOCKED_STATUSES.includes(primary.load_status)
   const isDelivered = primary.load_status === 26
+  const isBioLoad = hasBioOrDiesel(loads.map(l => l.product_name))
 
   // Local state mirroring saved settings
   const [terminalId, setTerminalId] = useState(settings?.terminal_id ?? primary.terminal_id ?? '')
   const [supplierId, setSupplierId] = useState<string>(settings?.supplier_id?.toString() ?? '')
   const [supplierNumber, setSupplierNumber] = useState(settings?.supplier_number ?? '')
+  const [bioTerminalId, setBioTerminalId] = useState(settings?.bio_terminal_id ?? '')
+  const [bioSupplierId, setBioSupplierId] = useState<string>(settings?.bio_supplier_id?.toString() ?? '')
+  const [bioSupplierNumber, setBioSupplierNumber] = useState(settings?.bio_supplier_number ?? '')
   const [notes, setNotes] = useState(settings?.notes ?? '')
   const [needsReview, setNeedsReview] = useState(settings?.needs_review ?? false)
   const [needsReviewNotes, setNeedsReviewNotes] = useState(settings?.needs_review_notes ?? '')
@@ -62,6 +69,8 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   const [notifyMessage, setNotifyMessage] = useState('')
   const [addTerminalMode, setAddTerminalMode] = useState(false)
   const [customTerminalName, setCustomTerminalName] = useState('')
+  const [addBioTerminalMode, setAddBioTerminalMode] = useState(false)
+  const [customBioTerminalName, setCustomBioTerminalName] = useState('')
 
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -69,6 +78,10 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   // Filter suppliers for the selected terminal's available numbers
   const selectedSupplier = suppliers.find(s => s.supplier_id.toString() === supplierId)
   const supplierOptions = suppliers.filter(s => s.supplier_name === selectedSupplier?.supplier_name)
+
+  // Bio supplier filtering
+  const selectedBioSupplier = suppliers.find(s => s.supplier_id.toString() === bioSupplierId)
+  const bioSupplierOptions = suppliers.filter(s => s.supplier_name === selectedBioSupplier?.supplier_name)
 
   function notify(msg: string) {
     setFeedback(msg)
@@ -82,6 +95,9 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
         terminalId: terminalId || null,
         supplierId: supplierId ? parseInt(supplierId) : null,
         supplierNumber: supplierNumber || null,
+        bioTerminalId: isBioLoad ? (bioTerminalId || null) : null,
+        bioSupplierId: isBioLoad && bioSupplierId ? parseInt(bioSupplierId) : null,
+        bioSupplierNumber: isBioLoad ? (bioSupplierNumber || null) : null,
         notes: notes || null,
         needsReview,
         needsReviewNotes: needsReviewNotes || null,
@@ -118,6 +134,9 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
         terminalId: terminalId || null,
         supplierId: supplierId ? parseInt(supplierId) : null,
         supplierNumber: supplierNumber || null,
+        bioTerminalId: isBioLoad ? (bioTerminalId || null) : null,
+        bioSupplierId: isBioLoad && bioSupplierId ? parseInt(bioSupplierId) : null,
+        bioSupplierNumber: isBioLoad ? (bioSupplierNumber || null) : null,
         notes: notes || null,
         needsReview: true,
         needsReviewNotes: needsReviewNotes || null,
@@ -260,6 +279,93 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
               ))}
           </select>
         </div>
+      </div>
+
+      {/* Bio Terminal & Supplier */}
+      <div className="border-t border-gray-100 pt-3">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Bio / Diesel</p>
+        {isBioLoad ? (
+          <div className="space-y-2">
+            {/* Bio terminal */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Bio Terminal</label>
+              {addBioTerminalMode ? (
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-400"
+                    placeholder="Terminal name"
+                    value={customBioTerminalName}
+                    onChange={e => setCustomBioTerminalName(e.target.value)}
+                  />
+                  <button
+                    onClick={() => {
+                      setBioTerminalId(`custom:${customBioTerminalName}`)
+                      setAddBioTerminalMode(false)
+                    }}
+                    className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
+                  >
+                    Add
+                  </button>
+                </div>
+              ) : (
+                <select
+                  value={bioTerminalId}
+                  onChange={e => {
+                    if (e.target.value === '__add__') {
+                      setAddBioTerminalMode(true)
+                    } else {
+                      setBioTerminalId(e.target.value)
+                    }
+                  }}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-400"
+                >
+                  <option value="">— Select terminal —</option>
+                  {terminals
+                    .filter(t => t.is_fuel_city || t.is_custom)
+                    .map(t => (
+                      <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_name}</option>
+                    ))}
+                  <option value="__add__">+ Add new terminal…</option>
+                </select>
+              )}
+            </div>
+
+            {/* Bio supplier */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Bio Supplier</label>
+                <select
+                  value={bioSupplierId}
+                  onChange={e => { setBioSupplierId(e.target.value); setBioSupplierNumber('') }}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-400"
+                >
+                  <option value="">— Select —</option>
+                  {[...new Map(suppliers.map(s => [s.supplier_name, s])).values()].map(s => (
+                    <option key={s.supplier_id} value={s.supplier_id.toString()}>{s.supplier_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Bio Supplier #</label>
+                <select
+                  value={bioSupplierNumber}
+                  onChange={e => setBioSupplierNumber(e.target.value)}
+                  disabled={!bioSupplierId}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-400 disabled:opacity-50"
+                >
+                  <option value="">— Select —</option>
+                  {bioSupplierOptions.map(s => (
+                    <option key={s.supplier_id} value={s.supplier_loading_number}>
+                      {s.supplier_loading_number}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 italic">N/A — no bio/diesel products on this load</p>
+        )}
       </div>
 
       {/* Notes */}

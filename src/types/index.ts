@@ -47,10 +47,20 @@ export interface LoadSettings {
   terminal_id: string | null
   supplier_id: number | null
   supplier_number: string | null
+  bio_terminal_id: string | null
+  bio_supplier_id: number | null
+  bio_supplier_number: string | null
   notes: string | null
   needs_review: boolean
   needs_review_notes: string | null
   updated_at: string
+}
+
+// Product names that indicate a bio/diesel load requiring the bio section
+export function hasBioOrDiesel(productNames: string[]): boolean {
+  return productNames.some(p =>
+    /bio|diesel|dsl/i.test(p)
+  )
 }
 
 export interface Site {

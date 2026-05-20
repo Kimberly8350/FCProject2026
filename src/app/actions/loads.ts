@@ -12,6 +12,9 @@ export async function saveLoadSettings(input: {
   terminalId: string | null
   supplierId: number | null
   supplierNumber: string | null
+  bioTerminalId: string | null
+  bioSupplierId: number | null
+  bioSupplierNumber: string | null
   notes: string | null
   needsReview: boolean
   needsReviewNotes: string | null
@@ -19,15 +22,15 @@ export async function saveLoadSettings(input: {
   const sb = await createServiceClient()
 
   // Handle custom terminal — save it to the terminals table if new
-  if (input.terminalId?.startsWith('custom:')) {
-    const name = input.terminalId.replace('custom:', '')
+  async function resolveCustomTerminal(id: string | null): Promise<string | null> {
+    if (!id?.startsWith('custom:')) return id
+    const name = id.replace('custom:', '')
     const { data: existing } = await sb
       .from('terminals')
       .select('terminal_id')
       .eq('terminal_name', name)
       .eq('is_custom', true)
       .single()
-
     if (!existing) {
       const newId = `custom-${Date.now()}`
       await sb.from('terminals').insert({
@@ -36,11 +39,13 @@ export async function saveLoadSettings(input: {
         is_custom: true,
         is_fuel_city: false,
       })
-      input.terminalId = newId
-    } else {
-      input.terminalId = existing.terminal_id
+      return newId
     }
+    return existing.terminal_id
   }
+
+  input.terminalId = await resolveCustomTerminal(input.terminalId)
+  input.bioTerminalId = await resolveCustomTerminal(input.bioTerminalId)
 
   // Fetch existing settings to detect what changed
   const { data: existing } = await sb
@@ -54,6 +59,9 @@ export async function saveLoadSettings(input: {
     terminal_id: input.terminalId,
     supplier_id: input.supplierId,
     supplier_number: input.supplierNumber,
+    bio_terminal_id: input.bioTerminalId,
+    bio_supplier_id: input.bioSupplierId,
+    bio_supplier_number: input.bioSupplierNumber,
     notes: input.notes,
     needs_review: input.needsReview,
     needs_review_notes: input.needsReviewNotes,
@@ -79,6 +87,25 @@ export async function saveLoadSettings(input: {
     })
   }
 
+  // Log bio terminal change
+  if (existing?.bio_terminal_id !== input.bioTerminalId) {
+    const { data: changeRecord } = await sb.from('load_changes').insert({
+      ce_id: input.ceId,
+      change_type: 'terminal_change',
+      old_value: existing?.bio_terminal_id ?? null,
+      new_value: input.bioTerminalId,
+      description: `Bio terminal updated to ${input.bioTerminalId}`,
+    }).select().single()
+
+    await sendNotificationEmail({
+      subject: `[CE #${input.ceId}] Bio Terminal Updated`,
+      body: `CE ID: ${input.ceId}\nBio terminal changed to: ${input.bioTerminalId}\nNotes: ${input.notes ?? '—'}`,
+      referenceType: 'load_change',
+      referenceId: changeRecord?.id,
+      ceId: input.ceId,
+    })
+  }
+
   // Log supplier change
   if (existing?.supplier_id !== input.supplierId || existing?.supplier_number !== input.supplierNumber) {
     const { data: changeRecord } = await sb.from('load_changes').insert({
@@ -92,6 +119,25 @@ export async function saveLoadSettings(input: {
     await sendNotificationEmail({
       subject: `[CE #${input.ceId}] Supplier Updated`,
       body: `CE ID: ${input.ceId}\nSupplier #: ${input.supplierNumber}\nNotes: ${input.notes ?? '—'}`,
+      referenceType: 'load_change',
+      referenceId: changeRecord?.id,
+      ceId: input.ceId,
+    })
+  }
+
+  // Log bio supplier change
+  if (existing?.bio_supplier_id !== input.bioSupplierId || existing?.bio_supplier_number !== input.bioSupplierNumber) {
+    const { data: changeRecord } = await sb.from('load_changes').insert({
+      ce_id: input.ceId,
+      change_type: 'supplier_change',
+      old_value: existing?.bio_supplier_number ?? null,
+      new_value: input.bioSupplierNumber,
+      description: `Bio supplier updated`,
+    }).select().single()
+
+    await sendNotificationEmail({
+      subject: `[CE #${input.ceId}] Bio Supplier Updated`,
+      body: `CE ID: ${input.ceId}\nBio Supplier #: ${input.bioSupplierNumber}\nNotes: ${input.notes ?? '—'}`,
       referenceType: 'load_change',
       referenceId: changeRecord?.id,
       ceId: input.ceId,
