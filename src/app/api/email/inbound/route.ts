@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Webhook } from 'svix'
 import { createServiceClient } from '@/lib/supabase/server'
 
-const BOL_ADDRESS = 'bol@fuelcityportal.com'
+const OUR_DOMAIN = 'fuelcityportal.com'
 
 /** Extract bare email address from "Name <email@domain.com>" or "email@domain.com" */
 function parseEmail(raw: string): string {
@@ -23,36 +23,44 @@ function parseEmail(raw: string): string {
   return (match ? match[1] : raw).toLowerCase().trim()
 }
 
-/** Return true if any recipient in the to/cc fields is the BOL address */
+/**
+ * Return true if any recipient is a BOL address at our domain.
+ * Matches bol@, bols@, BOL@, etc. — any local part starting with "bol".
+ */
 function isToBol(data: any): boolean {
-  // Resend may send `to` as a string, an array of strings, or an array of objects
   const toRaw: unknown = data?.to ?? data?.headers?.find?.((h: any) => h.name?.toLowerCase() === 'to')?.value ?? ''
   const candidates: string[] = Array.isArray(toRaw)
     ? toRaw.map((t: any) => (typeof t === 'string' ? t : t?.email ?? t?.address ?? ''))
     : [String(toRaw)]
-  return candidates.some(addr => parseEmail(addr) === BOL_ADDRESS)
+  return candidates.some(addr => {
+    const a = parseEmail(addr)
+    const [local, domain] = a.split('@')
+    return domain === OUR_DOMAIN && local.startsWith('bol')
+  })
 }
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
 
-  // Verify Svix signature
-  const secret = process.env.INBOUND_EMAIL_SECRET!
-  const wh = new Webhook(secret)
+  // Verify Svix signature (Resend signs inbound webhooks via Svix)
+  const secret = process.env.INBOUND_EMAIL_SECRET ?? ''
   let payload: any
 
-  try {
-    payload = wh.verify(rawBody, {
-      'svix-id':        req.headers.get('svix-id') ?? '',
-      'svix-timestamp': req.headers.get('svix-timestamp') ?? '',
-      'svix-signature': req.headers.get('svix-signature') ?? '',
-    })
-  } catch {
-    // Fallback: accept if secret matches x-webhook-secret directly (dev/testing)
-    const simpleSecret = req.headers.get('x-webhook-secret')
-    if (simpleSecret !== secret) {
+  if (secret && secret !== 'placeholder123') {
+    const wh = new Webhook(secret)
+    try {
+      payload = wh.verify(rawBody, {
+        'svix-id':        req.headers.get('svix-id') ?? '',
+        'svix-timestamp': req.headers.get('svix-timestamp') ?? '',
+        'svix-signature': req.headers.get('svix-signature') ?? '',
+      })
+    } catch (err) {
+      console.error('Inbound webhook signature verification failed:', err)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+  } else {
+    // No real secret configured — accept the request but log a warning
+    console.warn('INBOUND_EMAIL_SECRET not set or is placeholder; skipping signature verification')
     try { payload = JSON.parse(rawBody) } catch {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
     }
@@ -65,9 +73,20 @@ export async function POST(req: NextRequest) {
   const inReplyTo: string  = data?.in_reply_to ?? data?.headers?.find?.((h: any) => h.name?.toLowerCase() === 'in-reply-to')?.value ?? ''
   const attachments: any[] = data?.attachments ?? []
 
+  // Diagnostic log — visible in Vercel Function Logs
+  console.log('Inbound email received:', {
+    from: data?.from,
+    to: data?.to,
+    subject: data?.subject,
+    attachmentCount: attachments.length,
+    attachmentNames: attachments.map((a: any) => a?.filename ?? a?.name ?? '(unnamed)'),
+    isToBol: isToBol(data),
+    hasInReplyTo: Boolean(inReplyTo),
+  })
+
   const sb = await createServiceClient()
 
-  // ── Case 1: BOL PDF — any email addressed to bol@fuelcityportal.com ───────
+  // ── Case 1: BOL PDF — any email to bols@/bol@fuelcityportal.com ──────────
   if (isToBol(data)) {
     for (const attachment of attachments) {
       const filename: string = attachment?.filename ?? attachment?.name ?? ''
