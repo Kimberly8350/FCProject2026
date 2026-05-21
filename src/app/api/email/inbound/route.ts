@@ -101,7 +101,43 @@ export async function POST(req: NextRequest) {
       }
 
       const content = attachment.content ?? attachment.data ?? ''
-      const buffer = Buffer.from(content, 'base64')
+
+      // Log attachment details so we can see exactly what Resend sends
+      console.log(`BOL attachment for CE #${ceId}:`, {
+        filename,
+        contentType: attachment.contentType ?? attachment.mimeType ?? '(none)',
+        contentFieldType: typeof content,
+        isBuffer: Buffer.isBuffer(content),
+        isNodeBuffer: typeof content === 'object' && content?.type === 'Buffer',
+        contentLength: typeof content === 'string' ? content.length : JSON.stringify(content).length,
+        contentPreview: typeof content === 'string' ? content.slice(0, 80) : JSON.stringify(content).slice(0, 80),
+      })
+
+      let buffer: Buffer
+      if (Buffer.isBuffer(content)) {
+        // Already a Buffer
+        buffer = content
+      } else if (typeof content === 'object' && content?.type === 'Buffer' && Array.isArray(content?.data)) {
+        // Node.js Buffer serialized as JSON
+        buffer = Buffer.from(content.data)
+      } else if (typeof content === 'string' && content.startsWith('http')) {
+        // Resend sent a URL — fetch the actual bytes
+        const resp = await fetch(content)
+        buffer = Buffer.from(await resp.arrayBuffer())
+      } else if (typeof content === 'string') {
+        // Assume base64
+        buffer = Buffer.from(content, 'base64')
+      } else {
+        console.error(`BOL: unrecognised content format for CE #${ceId}`)
+        continue
+      }
+
+      // Sanity check — valid PDFs start with %PDF
+      if (buffer.length < 4 || buffer.toString('ascii', 0, 4) !== '%PDF') {
+        console.error(`BOL: decoded content for CE #${ceId} is not a valid PDF (first bytes: ${buffer.toString('hex', 0, 8)})`)
+        // Don't skip — upload anyway so we can inspect, but log clearly
+      }
+
       const storagePath = `bol/${ceId}/${filename}`
 
       const { error: uploadError } = await sb.storage
