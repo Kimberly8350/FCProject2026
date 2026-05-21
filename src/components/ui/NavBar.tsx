@@ -5,15 +5,21 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 const NAV_ITEMS = [
-  { href: '/loads',         label: 'Loads Board' },
-  { href: '/paperwork',     label: 'Paperwork' },
-  { href: '/history',       label: 'History' },
-  { href: '/email-settings',label: 'Email Settings' },
+  { href: '/loads',          label: 'Loads Board' },
+  { href: '/paperwork',      label: 'Paperwork' },
+  { href: '/history',        label: 'History' },
+  { href: '/email-settings', label: 'Email Settings' },
 ]
 
 const ADMIN_EMAIL = 'kimberly@qwtransport.com'
 
-export default function NavBar({ userEmail }: { userEmail: string }) {
+export default function NavBar({
+  userEmail,
+  unreadCount,
+}: {
+  userEmail: string
+  unreadCount: number
+}) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -57,7 +63,24 @@ export default function NavBar({ userEmail }: { userEmail: string }) {
             </Link>
           )}
         </div>
+
         <div className="flex items-center gap-3">
+          {/* Notification bell */}
+          <Link
+            href="/notifications"
+            className="relative flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-800 transition-colors"
+            title="Dispatch notifications"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </Link>
+
           <span className="text-xs text-gray-400 hidden sm:block">{userEmail}</span>
           <button
             onClick={handleSignOut}

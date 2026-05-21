@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import NavBar from '@/components/ui/NavBar'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -8,9 +9,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!user) redirect('/login')
 
+  // Fetch unread dispatch notification count for the bell icon
+  const sb = await createServiceClient()
+  const { count: unreadCount } = await sb
+    .from('dispatch_notifications')
+    .select('id', { count: 'exact', head: true })
+    .is('read_at', null)
+
   return (
     <div className="min-h-screen flex flex-col">
-      <NavBar userEmail={user.email ?? ''} />
+      <NavBar userEmail={user.email ?? ''} unreadCount={unreadCount ?? 0} />
       <main className="flex-1 container mx-auto px-4 py-6 max-w-7xl">
         {children}
       </main>

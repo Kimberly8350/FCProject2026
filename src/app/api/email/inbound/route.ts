@@ -23,20 +23,38 @@ function parseEmail(raw: string): string {
   return (match ? match[1] : raw).toLowerCase().trim()
 }
 
-/**
- * Return true if any recipient is a BOL address at our domain.
- * Matches bol@, bols@, BOL@, etc. — any local part starting with "bol".
- */
-function isToBol(data: any): boolean {
+/** Parse all recipient addresses from a Resend inbound payload */
+function parseRecipients(data: any): string[] {
   const toRaw: unknown = data?.to ?? data?.headers?.find?.((h: any) => h.name?.toLowerCase() === 'to')?.value ?? ''
-  const candidates: string[] = Array.isArray(toRaw)
+  const arr = Array.isArray(toRaw)
     ? toRaw.map((t: any) => (typeof t === 'string' ? t : t?.email ?? t?.address ?? ''))
     : [String(toRaw)]
-  return candidates.some(addr => {
-    const a = parseEmail(addr)
-    const [local, domain] = a.split('@')
+  return arr.map(parseEmail)
+}
+
+/**
+ * Email to bols@/bol@fuelcityportal.com → BOL PDF upload.
+ * Matches bol@, bols@, BOL@, etc.
+ */
+function isToBol(data: any): boolean {
+  return parseRecipients(data).some(addr => {
+    const [local, domain] = addr.split('@')
     return domain === OUR_DOMAIN && local.startsWith('bol')
   })
+}
+
+/** Email to notify@fuelcityportal.com → dispatch-initiated notification */
+function isToNotify(data: any): boolean {
+  return parseRecipients(data).some(addr => {
+    const [local, domain] = addr.split('@')
+    return domain === OUR_DOMAIN && local.startsWith('notify')
+  })
+}
+
+/** Extract CE ID from a subject line, e.g. "Issue with CE #239877" → 239877 */
+function parseCeId(subject: string): number | null {
+  const m = subject.match(/CE\s*#?\s*(\d+)/i)
+  return m ? parseInt(m[1], 10) : null
 }
 
 export async function POST(req: NextRequest) {
@@ -162,7 +180,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // ── Case 2: Dispatch reply to a notification ──────────────────────────────
+  // ── Case 2: Dispatch-initiated notification to notify@fuelcityportal.com ──
+  if (isToNotify(data)) {
+    const fromAddress = parseEmail(data?.from ?? '')
+    const subject: string = data?.subject ?? '(no subject)'
+    const message = textBody.trim() || '(no message body)'
+    const ceId = parseCeId(subject)
+
+    // Save to dispatch_notifications
+    const { data: notifRecord } = await sb.from('dispatch_notifications').insert({
+      ce_id: ceId,
+      from_address: fromAddress,
+      subject,
+      message,
+    }).select().single()
+
+    console.log(`Dispatch notification saved from ${fromAddress}`, { ceId, subject, id: notifRecord?.id })
+
+    // Forward to all Fuel City "receive" addresses
+    const { data: recipients } = await sb
+      .from('email_notifications')
+      .select('email')
+      .eq('receive', true)
+      .eq('active', true)
+
+    const toAddresses = (recipients ?? []).map((r: any) => r.email)
+    if (toAddresses.length > 0) {
+      const { Resend } = await import('resend')
+      const resend = new Resend(process.env.RESEND_API_KEY!)
+      const FROM = process.env.RESEND_FROM_ADDRESS!
+
+      const ceLabel = ceId ? ` — CE #${ceId}` : ''
+      await resend.emails.send({
+        from: `Fuel City Portal <${FROM}>`,
+        to: toAddresses,
+        subject: `Dispatch Message${ceLabel}: ${subject}`,
+        html: `
+          <div style="max-width:640px;margin:0 auto;padding:24px;font-family:sans-serif">
+            <h2 style="margin:0 0 16px;font-size:18px;color:#111827">
+              Message from Dispatch${ceLabel}
+            </h2>
+            <table style="border-collapse:collapse;width:100%;font-size:14px">
+              <tbody>
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;width:120px">From</td>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb">${fromAddress}</td>
+                </tr>
+                ${ceId ? `<tr style="background:#f9fafb">
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600">CE ID</td>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb">#${ceId}</td>
+                </tr>` : ''}
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600">Subject</td>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb">${subject}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;vertical-align:top">Message</td>
+                  <td style="padding:8px 12px;border:1px solid #e5e7eb;white-space:pre-wrap">${message}</td>
+                </tr>
+              </tbody>
+            </table>
+            <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb"/>
+            <p style="font-size:12px;color:#9ca3af">
+              View all notifications in the <a href="${process.env.NEXT_PUBLIC_APP_URL}/notifications" style="color:#dc2626">Fuel City Portal</a>.
+            </p>
+          </div>`,
+      })
+    }
+
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── Case 3: Dispatch reply to a notification ──────────────────────────────
   if (inReplyTo) {
     const { data: thread } = await sb
       .from('email_threads')

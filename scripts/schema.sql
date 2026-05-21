@@ -162,6 +162,23 @@ create table if not exists public.paperwork (
 create index if not exists paperwork_ce_id_idx on public.paperwork (ce_id);
 
 -- ──────────────────────────────────────────────
+-- DISPATCH NOTIFICATIONS (dispatch emails notify@fuelcityportal.com)
+-- ──────────────────────────────────────────────
+
+create table if not exists public.dispatch_notifications (
+  id           uuid default gen_random_uuid() primary key,
+  ce_id        integer null,          -- parsed from subject "CE #12345"; null if not found
+  from_address text not null,
+  subject      text not null,
+  message      text not null,
+  read_at      timestamptz null,
+  created_at   timestamptz default now()
+);
+
+create index if not exists dispatch_notif_ce_id_idx  on public.dispatch_notifications (ce_id);
+create index if not exists dispatch_notif_unread_idx on public.dispatch_notifications (read_at) where read_at is null;
+
+-- ──────────────────────────────────────────────
 -- EMAIL ROUTING (links inbound email replies to records)
 -- ──────────────────────────────────────────────
 

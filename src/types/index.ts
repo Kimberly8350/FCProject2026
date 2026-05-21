@@ -188,3 +188,23 @@ export interface Driver {
   active: boolean
   yard?: Yard | null
 }
+
+export interface DispatchNotification {
+  id: string
+  ce_id: number | null
+  from_address: string
+  subject: string
+  message: string
+  read_at: string | null
+  created_at: string
+}
+
+// Shared change request options used on load cards and mass-update panel
+export const CHANGE_OPTIONS = [
+  { value: 'load_before_5pm',     label: 'Load before 5 PM' },
+  { value: 'load_after_5pm',      label: 'Load after 5 PM' },
+  { value: 'load_after_midnight', label: 'Load after midnight' },
+  { value: 'delay',               label: 'Delay load' },
+  { value: 'move_up',             label: 'Move up load' },
+  { value: 'cancel',              label: 'Cancel load' },
+] as const

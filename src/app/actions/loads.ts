@@ -5,6 +5,16 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { sendNotificationEmail } from '@/lib/email'
 import { ChangeRequestType } from '@/types'
 
+const CHANGE_LABELS: Record<string, string> = {
+  load_before_5pm:    'Load before 5 PM',
+  load_after_5pm:     'Load after 5 PM',
+  load_after_midnight:'Load after midnight',
+  delay:              'Delay load',
+  move_up:            'Move up load',
+  cancel:             'Cancel load',
+  needs_review:       'Needs review',
+}
+
 // ── Save terminal/supplier/notes for a load ─────────────────────────────────
 
 export async function saveLoadSettings(input: {
@@ -277,10 +287,126 @@ export async function sendGeneralNotification(input: { message: string }) {
   }).select().single()
 
   await sendNotificationEmail({
-    subject: '[Fuel City] General Notification',
+    subject: 'General Notification — Fuel City Portal',
     body: input.message,
     referenceType: 'general_notification',
     referenceId: record?.id,
     ceId: null,
   })
+}
+
+// ── Mark all dispatch notifications as read ───────────────────────────────────
+
+export async function markNotificationsRead() {
+  const sb = await createServiceClient()
+  await sb
+    .from('dispatch_notifications')
+    .update({ read_at: new Date().toISOString() })
+    .is('read_at', null)
+  revalidatePath('/notifications')
+}
+
+// ── Apply the same settings/change request to multiple loads ─────────────────
+
+export async function applyMassUpdate(input: {
+  ceIds: number[]
+  // undefined = skip that field; non-undefined = apply (null clears it)
+  terminalId?: string | null
+  supplierId?: number | null
+  supplierNumber?: string | null
+  bioTerminalId?: string | null
+  bioSupplierId?: number | null
+  bioSupplierNumber?: string | null
+  notes?: string | null
+  changeType?: string | null
+  changeNotes?: string | null
+}) {
+  if (input.ceIds.length === 0) return
+  const sb = await createServiceClient()
+
+  const settingsChanges: string[] = []
+  if (input.terminalId    !== undefined) settingsChanges.push('Terminal')
+  if (input.supplierId    !== undefined) settingsChanges.push('Supplier')
+  if (input.supplierNumber !== undefined) settingsChanges.push('Supplier #')
+  if (input.bioTerminalId !== undefined) settingsChanges.push('Bio Terminal')
+  if (input.bioSupplierId !== undefined) settingsChanges.push('Bio Supplier')
+  if (input.bioSupplierNumber !== undefined) settingsChanges.push('Bio Supplier #')
+  if (input.notes         !== undefined) settingsChanges.push('Notes')
+
+  const hasSettings = settingsChanges.length > 0
+  const hasChangeReq = Boolean(input.changeType)
+
+  for (const ceId of input.ceIds) {
+    if (hasSettings) {
+      const { data: existing } = await sb
+        .from('load_settings').select('*').eq('ce_id', ceId).single()
+
+      const patch: Record<string, unknown> = { ce_id: ceId, updated_at: new Date().toISOString() }
+      if (input.terminalId     !== undefined) patch.terminal_id       = input.terminalId
+      if (input.supplierId     !== undefined) patch.supplier_id       = input.supplierId
+      if (input.supplierNumber !== undefined) patch.supplier_number   = input.supplierNumber
+      if (input.bioTerminalId  !== undefined) patch.bio_terminal_id   = input.bioTerminalId
+      if (input.bioSupplierId  !== undefined) patch.bio_supplier_id   = input.bioSupplierId
+      if (input.bioSupplierNumber !== undefined) patch.bio_supplier_number = input.bioSupplierNumber
+      if (input.notes          !== undefined) patch.notes             = input.notes
+
+      if (existing) {
+        await sb.from('load_settings').update(patch).eq('ce_id', ceId)
+      } else {
+        await sb.from('load_settings').insert({ needs_review: false, ...patch })
+      }
+
+      await sb.from('load_changes').insert({
+        ce_id: ceId,
+        change_type: 'settings_update',
+        description: `Mass update: ${settingsChanges.join(', ')}`,
+      })
+    }
+
+    if (hasChangeReq && input.changeType) {
+      await sb.from('load_changes').insert({
+        ce_id: ceId,
+        change_type: input.changeType,
+        description: CHANGE_LABELS[input.changeType] ?? input.changeType,
+        notes: input.changeNotes,
+      })
+    }
+  }
+
+  // One consolidated email for the whole batch
+  const ceList = input.ceIds.map(id => `CE #${id}`).join(', ')
+
+  const settingsRows = settingsChanges.map(f =>
+    `<tr><td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:600">${f}</td>
+     <td style="padding:6px 12px;border:1px solid #e5e7eb">Updated across all selected loads</td></tr>`
+  ).join('')
+
+  const changeRow = hasChangeReq
+    ? `<tr style="background:#fef2f2"><td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:600">Change Request</td>
+       <td style="padding:6px 12px;border:1px solid #e5e7eb"><strong>${CHANGE_LABELS[input.changeType!] ?? input.changeType}</strong>${input.changeNotes ? ` — ${input.changeNotes}` : ''}</td></tr>`
+    : ''
+
+  const htmlContent = `
+    <h2 style="margin:0 0 8px;font-size:18px;color:#111827">Mass Update</h2>
+    <p style="margin:0 0 16px;font-size:14px;color:#6b7280">Affects: ${ceList}</p>
+    <table style="border-collapse:collapse;width:100%;font-size:14px">
+      <thead>
+        <tr style="background:#f9fafb">
+          <th style="text-align:left;padding:8px 12px;border:1px solid #e5e7eb">Field</th>
+          <th style="text-align:left;padding:8px 12px;border:1px solid #e5e7eb">Action</th>
+        </tr>
+      </thead>
+      <tbody>${settingsRows}${changeRow}</tbody>
+    </table>`
+
+  await sendNotificationEmail({
+    subject: `Mass Update — ${input.ceIds.length} Load${input.ceIds.length !== 1 ? 's' : ''}`,
+    body: `Mass update applied to: ${ceList}`,
+    html: htmlContent,
+    referenceType: 'load_change',
+    referenceId: undefined,
+    ceId: null,
+  })
+
+  revalidatePath('/loads')
 }

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Load, Terminal, Supplier, Driver, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel } from '@/types'
+import { Load, Terminal, Supplier, Driver, ETAResult, LOAD_STATUS_LABELS, LOCKED_STATUSES, hasBioOrDiesel, CHANGE_OPTIONS } from '@/types'
 import { saveLoadSettings, submitChangeRequest, sendDispatchNote } from '@/app/actions/loads'
+import LoadHistoryModal from './LoadHistoryModal'
 
 interface Props {
   loads: Load[]                // all product rows for this CE_ID
@@ -25,6 +26,10 @@ interface Props {
   drivers: Driver[]
   isAdmin: boolean
   siteCoords: { lat: number; lng: number } | null
+  // Selection mode
+  inSelectMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (ceId: number) => void
 }
 
 const STATUS_COLORS: Record<number, string> = {
@@ -38,16 +43,9 @@ const STATUS_COLORS: Record<number, string> = {
   26: 'bg-green-50 text-green-700',
 }
 
-const CHANGE_OPTIONS = [
-  { value: 'load_before_5pm',    label: 'Load before 5 PM' },
-  { value: 'load_after_5pm',     label: 'Load after 5 PM' },
-  { value: 'load_after_midnight',label: 'Load after midnight' },
-  { value: 'delay',              label: 'Delay load' },
-  { value: 'move_up',            label: 'Move up load' },
-  { value: 'cancel',             label: 'Cancel load' },
-]
+// CHANGE_OPTIONS is now imported from @/types
 
-export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, eta, drivers, isAdmin, siteCoords }: Props) {
+export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, settings, eta, drivers, isAdmin, siteCoords, inSelectMode, isSelected, onToggleSelect }: Props) {
   const primary = loads[0]
   const ceId = primary.ce_id
   const isLocked = LOCKED_STATUSES.includes(primary.load_status)
@@ -77,6 +75,7 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   const [addBioTerminalMode, setAddBioTerminalMode] = useState(false)
   const [customBioTerminalName, setCustomBioTerminalName] = useState('')
 
+  const [showHistory, setShowHistory] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<string | null>(null)
 
@@ -156,20 +155,56 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
   }
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm border ${needsReview ? 'border-orange-400' : 'border-gray-200'} p-4 flex flex-col gap-3`}>
+    <>
+    {showHistory && <LoadHistoryModal ceId={ceId} onClose={() => setShowHistory(false)} />}
 
+    <div
+      className={`bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 transition-all ${
+        inSelectMode && isSelected
+          ? 'border-red-500 ring-2 ring-red-200'
+          : needsReview
+          ? 'border-orange-400'
+          : 'border-gray-200'
+      }`}
+      onClick={inSelectMode ? () => onToggleSelect?.(ceId) : undefined}
+      style={inSelectMode ? { cursor: 'pointer' } : undefined}
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs text-gray-500 font-mono">CE #{ceId}</p>
-          <p className="text-sm font-semibold text-gray-900 mt-0.5">{primary.site_name}</p>
-          {primary.first_name && (
-            <p className="text-xs text-gray-500">{primary.first_name} {primary.last_name}</p>
+        <div className="flex items-start gap-2">
+          {/* Selection checkbox */}
+          {inSelectMode && (
+            <input
+              type="checkbox"
+              checked={isSelected ?? false}
+              onChange={() => onToggleSelect?.(ceId)}
+              onClick={e => e.stopPropagation()}
+              className="mt-1 h-4 w-4 accent-red-600 cursor-pointer shrink-0"
+            />
           )}
+          <div>
+            <p className="text-xs text-gray-500 font-mono">CE #{ceId}</p>
+            <p className="text-sm font-semibold text-gray-900 mt-0.5">{primary.site_name}</p>
+            {primary.first_name && (
+              <p className="text-xs text-gray-500">{primary.first_name} {primary.last_name}</p>
+            )}
+          </div>
         </div>
-        <span className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap ${STATUS_COLORS[primary.load_status] ?? 'bg-gray-100 text-gray-600'}`}>
-          {LOAD_STATUS_LABELS[primary.load_status] ?? `Status ${primary.load_status}`}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* History / folder icon */}
+          <button
+            onClick={e => { e.stopPropagation(); setShowHistory(true) }}
+            title="View load history & paperwork"
+            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+          </button>
+          <span className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap ${STATUS_COLORS[primary.load_status] ?? 'bg-gray-100 text-gray-600'}`}>
+            {LOAD_STATUS_LABELS[primary.load_status] ?? `Status ${primary.load_status}`}
+          </span>
+        </div>
       </div>
 
       {/* Admin: manual driver assignment */}
@@ -525,5 +560,6 @@ export default function LoadCard({ loads, allDriverLoads, terminals, suppliers, 
         </div>
       )}
     </div>
+    </>
   )
 }
