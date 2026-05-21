@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 
 export default async function PaperworkPage() {
   const supabase = await createClient()
@@ -18,6 +19,22 @@ export default async function PaperworkPage() {
     : { data: [] }
 
   const loadMap = Object.fromEntries((loads ?? []).map(l => [l.ce_id, l]))
+
+  // Generate signed URLs server-side using service client — bypasses bucket RLS
+  const sb = await createServiceClient()
+  const signedUrlMap: Record<string, string> = {}
+  if (paperwork && paperwork.length > 0) {
+    await Promise.all(
+      paperwork.map(async (p) => {
+        const { data } = await sb.storage
+          .from('paperwork')
+          .createSignedUrl(p.storage_path, 3600) // 1-hour expiry
+        if (data?.signedUrl) {
+          signedUrlMap[p.id] = data.signedUrl
+        }
+      })
+    )
+  }
 
   return (
     <div>
@@ -43,6 +60,7 @@ export default async function PaperworkPage() {
             <tbody className="divide-y divide-gray-100">
               {paperwork.map(p => {
                 const load = loadMap[p.ce_id]
+                const pdfUrl = signedUrlMap[p.id]
                 return (
                   <tr key={p.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 font-mono text-gray-900">#{p.ce_id}</td>
@@ -57,7 +75,18 @@ export default async function PaperworkPage() {
                       })}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <PaperworkDownloadButton storagePath={p.storage_path} fileName={p.file_name} />
+                      {pdfUrl ? (
+                        <a
+                          href={pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-red-600 hover:text-red-700 font-medium"
+                        >
+                          View PDF
+                        </a>
+                      ) : (
+                        <span className="text-xs text-gray-400">Unavailable</span>
+                      )}
                     </td>
                   </tr>
                 )
@@ -67,20 +96,5 @@ export default async function PaperworkPage() {
         </div>
       )}
     </div>
-  )
-}
-
-// Separate client component handles the signed URL fetch
-function PaperworkDownloadButton({ storagePath, fileName }: { storagePath: string; fileName: string }) {
-  // This uses a server-generated signed URL via an API route
-  return (
-    <a
-      href={`/api/paperwork/download?path=${encodeURIComponent(storagePath)}&name=${encodeURIComponent(fileName)}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-xs text-red-600 hover:text-red-700 font-medium"
-    >
-      View PDF
-    </a>
   )
 }
