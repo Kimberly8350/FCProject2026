@@ -1,5 +1,4 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { markNotificationsRead } from '@/app/actions/loads'
 
 export default async function NotificationsPage() {
   const sb = await createServiceClient()
@@ -9,8 +8,13 @@ export default async function NotificationsPage() {
     .select('*')
     .order('created_at', { ascending: false })
 
-  // Mark all as read now that the page is viewed
-  await markNotificationsRead()
+  // Mark all unread as read now that the page is viewed.
+  // We call the DB directly here (not the Server Action) because
+  // revalidatePath() cannot be called during page rendering.
+  await sb
+    .from('dispatch_notifications')
+    .update({ read_at: new Date().toISOString() })
+    .is('read_at', null)
 
   const fmt = (ts: string) =>
     new Date(ts).toLocaleString('en-US', {
